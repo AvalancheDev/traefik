@@ -10,6 +10,7 @@ TRAEFIK_ENVS := \
 
 SRCS = $(shell git ls-files '*.go' | grep -v '^external/')
 
+DOCKER_VERSION := $(if $(DOCKER_VERSION),$(DOCKER_VERSION),1.10.3)
 BIND_DIR := "dist"
 TRAEFIK_MOUNT := -v "$(CURDIR)/$(BIND_DIR):/go/src/github.com/containous/traefik/$(BIND_DIR)"
 
@@ -21,6 +22,8 @@ INTEGRATION_OPTS := $(if $(MAKE_DOCKER_HOST),-e "DOCKER_HOST=$(MAKE_DOCKER_HOST)
 
 DOCKER_BUILD_ARGS := $(if $(DOCKER_VERSION), "--build-arg=DOCKER_VERSION=$(DOCKER_VERSION)",)
 DOCKER_RUN_TRAEFIK := docker run $(INTEGRATION_OPTS) -it $(TRAEFIK_ENVS) $(TRAEFIK_MOUNT) "$(TRAEFIK_DEV_IMAGE)"
+
+DOCKERFILE_TEMP := $(shell mktemp build.Dockerfile.XXXXX)
 
 print-%: ; @echo $*=$($*)
 
@@ -48,7 +51,10 @@ validate: build  ## validate gofmt, golint and go vet
 	$(DOCKER_RUN_TRAEFIK) ./script/make.sh  validate-gofmt validate-govet validate-golint validate-misspell
 
 build: dist
-	docker build $(DOCKER_BUILD_ARGS) -t "$(TRAEFIK_DEV_IMAGE)" -f build.Dockerfile .
+	echo $(DOCKERFILE_TEMP)
+	cat build.Dockerfile | sed "s/{DOCKER_VERSION}/${DOCKER_VERSION}/" > $(DOCKERFILE_TEMP)
+	docker build -t "$(TRAEFIK_DEV_IMAGE)" -f $(DOCKERFILE_TEMP) .
+	rm $(DOCKERFILE_TEMP)
 
 build-webui:
 	docker build -t traefik-webui -f webui/Dockerfile webui
@@ -57,10 +63,13 @@ build-no-cache: dist
 	docker build --no-cache -t "$(TRAEFIK_DEV_IMAGE)" -f build.Dockerfile .
 
 shell: build ## start a shell inside the build env
-	$(DOCKER_RUN_TRAEFIK) /bin/bash
 
-image: build ## build a docker traefik image 
-	docker build -t $(TRAEFIK_IMAGE) .
+base-images:
+	docker build -t containous/traefik-webui-base-image -f webui/webui.base.Dockerfile webui
+	docker build $(DOCKER_BUILD_ARGS) -t containous/traefik-base-image -f base.Dockerfile .
+	
+deploy-docker-base:
+	script/deploy-docker-base.sh
 
 dist:
 	mkdir dist
